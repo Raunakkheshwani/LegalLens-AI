@@ -1,0 +1,22 @@
+[
+  {
+    "question": "What is the security deposit amount?",
+    "ground_truth": "SECURITY DEPOSIT: Upon the execution of this Agreement, the TENANTS shall pay to the LANDLORD, an interest-free security deposit of two month rent of Rs. 68,000/- (Rupees SIXTY EIGHT THOUSAND Only) security towards various charges such as Maintenance Charges, Electricity Charges, Water charges, Sewage Charges, Club Membership Charges, common area charges etc. for fulfilling the TENANTS's obligations under this Agreement. The security deposit shall be refunded within fifteen (15) days of termination, after deducting unpaid rent, unpaid bills, damages beyond normal wear and tear, or other breaches."
+  },
+  {
+    "question": "What is the rent deposit date?",
+    "ground_truth": "The Advance Rent and Maintenance Charges shall be paid by the 20th of every month. At signing, the TENANTS pay rent for the remaining period of the month plus two months security deposit. Thereafter, full rent and maintenance charges are due on or before the 25th day of each month. A late fee of Rs. 500 per week applies beyond the 25th, capped at 20% of combined rent and maintenance charges."
+  },
+  {
+    "question": "What is the notice period required to terminate the agreement?",
+    "ground_truth": "The required notice period to terminate the agreement is 1 month, given in writing, delivered via registered email or mail. The notice period starts the day it is received."
+  },
+  {
+    "question": "What are the maintenance charges and when are they due?",
+    "ground_truth": "Maintenance Charges are due along with rent by the 20th of every month initially, and thereafter on or before the 25th day of each month. A late fee of Rs. 500 per week of delay applies beyond the 25th, capped at 20% of the combined Rent and Maintenance Charges."
+  },
+  {
+    "question": "What is the monthly rent amount?",
+    "ground_truth": "The monthly rent for the PREMISES is fixed at Rs. 34,000/- (Rupees THIRTY FOUR THOUSAND Only). Payments for rent, maintenance, and other charges are made exclusively via UPI or NEFT to the LANDLORD's bank account."
+  }
+]

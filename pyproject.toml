@@ -1,0 +1,9 @@
+[project]
+name = "legal-doc-reviewer"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "datasets>=5.0.0",
+    "langsmith>=0.10.5",
+    "ragas>=0.4.3",
+]

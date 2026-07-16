@@ -22,3 +22,12 @@ CHUNK_OVERLAP = 120
 TOP_K = 8
 
 MAX_CRITIQUE_LOOPS = 2
+
+# LangSmith tracing is picked up automatically via environment variables
+# (LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGCHAIN_PROJECT) once .env is loaded.
+# This just gives us a visible confirmation when the app starts.
+import os as _os
+if _os.getenv("LANGCHAIN_TRACING_V2") == "true":
+    print(f"[LangSmith] Tracing enabled → project: {_os.getenv('LANGCHAIN_PROJECT')}")
+else:
+    print("[LangSmith] Tracing NOT enabled — check .env")
