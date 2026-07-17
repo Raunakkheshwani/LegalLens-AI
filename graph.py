@@ -133,7 +133,7 @@ def route_after_critique(state: reviewState) -> str:
     
 
 # ---- 4. Build + compile with checkpointer + interrupt ----
-def build_graph():
+def build_graph(interactive: bool = True):
     graph=StateGraph(reviewState)
 
     graph.add_node("retrieve", retrieve_node)
@@ -159,8 +159,12 @@ def build_graph():
     graph.add_edge("finalize", END )
 
     memory= MemorySaver()
-
-    return graph.compile(checkpointer=memory, interrupt_before=["human_review"])
+    if interactive:
+        # Real usage: pause before human_review so a person can approve/edit.
+        return graph.compile(checkpointer=memory, interrupt_before=["human_review"])
+    else:
+        # Batch evaluation: run straight through, no pause, no human needed.
+        return graph.compile(checkpointer=memory)
 
 # ---- 5. Run it with real human interaction ----
 
@@ -186,6 +190,7 @@ if __name__== "__main__":
     app.invoke(initial_state, config= thread_config)
 
 
+    # using interrupt before human review paused the state to that stage 
     # Graph is now paused. Pull out the current draft to show the human.
     paused_state = app.get_state(thread_config).values
     print("\n=== DRAFT ANSWER — AWAITING YOUR APPROVAL ===")
