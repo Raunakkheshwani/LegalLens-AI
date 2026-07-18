@@ -19,7 +19,7 @@ RAW_DOCS_DIR = "data/raw_contracts"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
-TOP_K = 8
+TOP_K = 4
 
 MAX_CRITIQUE_LOOPS = 2
 

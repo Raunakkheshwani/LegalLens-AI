@@ -34,8 +34,13 @@ def run_pipeline_for_question(app,query:str):
     answer plus the raw retrieved chunks used.
     """
     thread_config = {"configurable": {"thread_id": f"eval-{hash(query)}"}}
+    document_path = "data/raw_contracts/Rent Agreement Km 51 104.pdf" 
 
     initial_state = {
+        # 2 new addition 
+        "document_path": document_path,
+        "document_id": "",  # filled in by retrieve_node
+        
         "query": query,
         "retrieved_chunks": [],
         "draft_answer": "",
@@ -53,7 +58,10 @@ def run_pipeline_for_question(app,query:str):
     ##result = app.invoke(None, config=thread_config)
     ##return result["final_answer"], paused_state["retrieved_chunks"]
 
-    result = app.invoke(initial_state, config=thread_config)   # runs straight through to END
+    app.invoke(initial_state, config=thread_config)   # runs until paused at human_review
+    result = app.invoke(None, config=thread_config)    # resume -> finalize -> END
+
+    
     return result["final_answer"], result["retrieved_chunks"]
 
 """

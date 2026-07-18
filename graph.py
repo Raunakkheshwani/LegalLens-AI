@@ -21,11 +21,15 @@ from langchain_chroma import Chroma
 import config 
 from retriever import get_retriever
 
+from retriever import get_retriever_for_file
+
 #STATE
 class reviewState(TypedDict): 
+    document_path: str          # NEW — path to the uploaded file for this session
+    document_id: str            # NEW — filled in by retrieve_node, used for tracing/logging
     query: str
     messages: Annotated[list,add_messages]
-    retrieved_chunk : list[str]
+    retrieved_chunks : list[str]
     draft_answer: str
     critique: str
     needs_revision: bool
@@ -35,18 +39,29 @@ class reviewState(TypedDict):
 llm = ChatGroq(model= config.LLM_MODEL, groq_api_key= config.GROQ_API_KEY, temperature= 0.7)
 
 # ---- 2. Define each Node ----
-def retrieve_node(state: reviewState) -> dict:
+"""def retrieve_node(state: reviewState) -> dict:
     retriever= get_retriever() # retrieves the similar chunks acc to user imput query
     docs= retriever.invoke(state['query']) # save the retrieved chunks into this docs including the meta data and all
     chunks= [d.page_content for d in docs] # save the page content in the list 
     return {
-        "retrieved_chunk": chunks,
+        "retrieved_chunks": chunks,
         "messages" : [SystemMessage(content= f"Retrieved {len(chunks)} chunks for query : {state["query"]} ")]
     }
+"""
+def retrieve_node(state: reviewState) -> dict:
+    retriever, doc_id = get_retriever_for_file(state["document_path"])
+    docs = retriever.invoke(state["query"])
+    chunks = [d.page_content for d in docs]
+    return {
+        "retrieved_chunks": chunks,
+        "document_id": doc_id,
+        "messages": [SystemMessage(content=f"Retrieved {len(chunks)} chunks from doc={doc_id} for query: '{state['query']}'")],
+    }
+
 
 def draft_node(state: reviewState) -> dict:
     # so talking about the draft, the draft will obviously be generate by the llm and that we have to store and make a critique on that and for that we have to invoke the llm and for that we have a prompt which we will be sending to the llm with the RETREIVED CHUNK TO STRUCTURE AND PRECISELY RESPOND HOWEVER to generate the response draft 
-    context = "\n\n".join(state["retrieved_chunk"])
+    context = "\n\n".join(state["retrieved_chunks"])
     prompt = f"""You are a legal document review assistant.
 Using ONLY the context below, answer the user's question clearly.
 If the answer isn't in the context, say so honestly — do not make anything up.
@@ -60,12 +75,12 @@ Answer:"""
 # in this prompt we collected the chunk and send them in the prompt as context for answering in better way
     response= llm.invoke(prompt)
     return{
-        "draft_message": response.content,
+        "draft_answer": response.content,
         "messages" : [AIMessage(content=f"[Draft] {response.content} ")]
     }
 
 def critique_node(state: reviewState) -> dict:
-    context = "\n\n".join(state["retrieved_chunk"])
+    context = "\n\n".join(state["retrieved_chunks"])
     prompt = f"""You are a strict fact-checker reviewing a draft answer against source text.
 
 Source context:
@@ -80,6 +95,7 @@ Is anything missing or possibly wrong?
 Respond in this exact format:
 VERDICT: OK or NEEDS_REVISION
 FEEDBACK: <your specific feedback, or "none" if OK>"""
+
     
     response = llm.invoke(prompt)
     needs_revision= "NEEDS_REVISION" in response.content 
@@ -91,7 +107,7 @@ FEEDBACK: <your specific feedback, or "none" if OK>"""
     }
 
 def revise_node(state: reviewState) -> dict:
-    context = "\n\n".join(state["retrieved_chunk"]),
+    context = "\n\n".join(state["retrieved_chunks"]),
     prompt = f"""You previously gave this draft answer:
 {state['draft_answer']}
 
@@ -171,11 +187,16 @@ def build_graph(interactive: bool = True):
 if __name__== "__main__":
     app= build_graph()
 
+    document_path = "data/raw_contracts/Rent Agreement Km 51 104.pdf"  # or make this an input() too
     user_query = input("enter your legal question about the contract")
 
     thread_config= {"configurable": {"thread_id": "session-1"}}
 
     initial_state = {
+        ## first 2 new additions 
+        "document_path": document_path,
+        "document_id": "",  # filled in by retrieve_node
+
         "query": user_query,
         "messages": [HumanMessage(content=user_query)],
         "retrieved_chunks": [],
@@ -209,6 +230,7 @@ if __name__== "__main__":
 
     print("\n=== FINAL ANSWER ===")
     print(result["final_answer"])
+    print(f"\n(Answered using document_id: {result['document_id']})")
 
     print("\n=== FULL REASONING TRACE (messages) ===")
     for msg in result["messages"]:
