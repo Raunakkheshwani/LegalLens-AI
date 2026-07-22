@@ -23,6 +23,8 @@ from retriever import get_retriever
 
 from retriever import get_retriever_for_file
 
+from hybrid_retriever import get_hybrid_retriever_for_file
+
 #STATE
 class reviewState(TypedDict): 
     document_path: str          # NEW — path to the uploaded file for this session
@@ -33,10 +35,26 @@ class reviewState(TypedDict):
     draft_answer: str
     critique: str
     needs_revision: bool
+
+    ## new addtion
+    ever_needed_revision: bool   # NEW — tracks if revision EVER triggered, across loops
+    
     loop_count: int
     final_answer: str
 
 llm = ChatGroq(model= config.LLM_MODEL, groq_api_key= config.GROQ_API_KEY, temperature= 0.7)
+
+# ---- 1b. Query classifier — PUT IT HERE ----
+JUDGMENT_KEYWORDS = [
+    "risk", "risky", "unfavorable", "unfair", "safe", "concerning",
+    "problem", "issue", "should i", "is it okay", "red flag",
+    "dangerous", "protect", "advantage", "disadvantage",
+]
+
+def is_judgment_query(query: str) -> bool:
+    query_lower = query.lower()
+    return any(kw in query_lower for kw in JUDGMENT_KEYWORDS)
+
 
 # ---- 2. Define each Node ----
 """def retrieve_node(state: reviewState) -> dict:
@@ -49,6 +67,8 @@ llm = ChatGroq(model= config.LLM_MODEL, groq_api_key= config.GROQ_API_KEY, tempe
     }
 """
 def retrieve_node(state: reviewState) -> dict:
+    """
+    
     retriever, doc_id = get_retriever_for_file(state["document_path"])
     docs = retriever.invoke(state["query"])
     chunks = [d.page_content for d in docs]
@@ -57,6 +77,21 @@ def retrieve_node(state: reviewState) -> dict:
         "document_id": doc_id,
         "messages": [SystemMessage(content=f"Retrieved {len(chunks)} chunks from doc={doc_id} for query: '{state['query']}'")],
     }
+
+    """
+    if config.USE_HYBRID_SEARCH:
+        retriever, doc_id = get_hybrid_retriever_for_file(state["document_path"])
+    else:
+        retriever, doc_id = get_retriever_for_file(state["document_path"])
+
+    docs = retriever.invoke(state["query"])
+    chunks = [d.page_content for d in docs]
+    return {
+        "retrieved_chunks": chunks,
+        "document_id": doc_id,
+        "messages": [SystemMessage(content=f"Retrieved {len(chunks)} chunks from doc={doc_id} (hybrid={config.USE_HYBRID_SEARCH}) for query: '{state['query']}'")],
+    }
+
 
 
 def draft_node(state: reviewState) -> dict:
@@ -103,6 +138,8 @@ FEEDBACK: <your specific feedback, or "none" if OK>"""
     return {
         "critique" : response.content, 
         "needs_revision" : needs_revision,
+         # OR with existing value — once True, stays True for the rest of this run
+        "ever_needed_revision": state.get("ever_needed_revision", False) or needs_revision,
         "messages" : [SystemMessage(content = f" [Critiqu] {response.content}")]
     }
 
@@ -130,8 +167,14 @@ def human_review_node(state: reviewState) -> dict:
     # By the time this node actually RUNS, the human has already
     # approved or edited state["draft_answer"] outside the graph.
     # This node just logs that a human checkpoint happened.
+    reason = []
+    if state["ever_needed_revision"]:
+        reason.append("critique flagged a revision during this run")
+    if is_judgment_query(state["query"]):
+        reason.append("query requires human judgment (risk/opinion-based)")
+
     return {
-        "messages": [SystemMessage(content="[Human review] Answer approved/edited by human before finalizing.")],
+        "messages": [SystemMessage(content=f"[Human review] Triggered because: {'; '.join(reason)}")],
     }
 
 def final_node(state: reviewState) -> dict:
@@ -145,7 +188,11 @@ def final_node(state: reviewState) -> dict:
 def route_after_critique(state: reviewState) -> str:
         if state['needs_revision'] and state['loop_count'] < config.MAX_CRITIQUE_LOOPS:
             return "revise" # this is the node name linked to node function of revise node
-        return "human_review"
+        requires_review = state["ever_needed_revision"] or is_judgment_query(state["query"])
+
+        if requires_review:
+            return "human_review"
+        return "finalize"
     
 
 # ---- 4. Build + compile with checkpointer + interrupt ----
@@ -168,7 +215,7 @@ def build_graph(interactive: bool = True):
     graph.add_conditional_edges(
         "critique",
         route_after_critique,
-        {"revise": "revise", "human_review" : "human_review"}
+        {"revise": "revise", "human_review" : "human_review", "finalize": "finalize"}
     )
     graph.add_edge("revise", "human_review")
     graph.add_edge("human_review", "finalize")
@@ -203,6 +250,9 @@ if __name__== "__main__":
         "draft_answer": "",
         "critique": "",
         "needs_revision": False,
+
+         "ever_needed_revision": False,   # NEW
+
         "loop_count": 0,
         "final_answer": ""
     }
@@ -210,9 +260,10 @@ if __name__== "__main__":
  # Runs retrieve -> draft -> critique -> (maybe revise loop) -> PAUSES before human_review
     app.invoke(initial_state, config= thread_config)
 
-
+    """
     # using interrupt before human review paused the state to that stage 
     # Graph is now paused. Pull out the current draft to show the human.
+    CODE-
     paused_state = app.get_state(thread_config).values
     print("\n=== DRAFT ANSWER — AWAITING YOUR APPROVAL ===")
     print(paused_state["draft_answer"])
@@ -227,6 +278,29 @@ if __name__== "__main__":
 
     # Resume execution from exactly where it paused (human_review -> finalize -> END)
     result = app.invoke(None, config=thread_config)
+
+    """
+
+# Check if we're actually paused, or if it went straight to finalize
+    state_snapshot = app.get_state(thread_config)
+
+    if state_snapshot.next:  # non-empty means graph is paused, waiting on a node
+        print("\n=== AI-GENERATED ANALYSIS — AWAITING REVIEWER SIGN-OFF ===")
+        print(state_snapshot.values["draft_answer"])
+
+        decision = input("\nReviewer: press Enter to approve this AI-generated analysis, or enter your corrected assessment: ").strip()
+        if decision:
+            app.update_state(thread_config, {"draft_answer": decision})
+
+        result = app.invoke(None, config=thread_config)
+    else:
+    # Graph already finished — no human review was required
+        result = state_snapshot.values
+        print("\n(No human review required — auto-finalized: factual extraction, high confidence)")
+
+    print("\n=== FINAL ANSWER ===")
+    print(result["final_answer"])
+
 
     print("\n=== FINAL ANSWER ===")
     print(result["final_answer"])

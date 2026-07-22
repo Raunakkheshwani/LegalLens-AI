@@ -31,3 +31,7 @@ if _os.getenv("LANGCHAIN_TRACING_V2") == "true":
     print(f"[LangSmith] Tracing enabled → project: {_os.getenv('LANGCHAIN_PROJECT')}")
 else:
     print("[LangSmith] Tracing NOT enabled — check .env")
+
+
+
+USE_HYBRID_SEARCH = False  # flip to False to fall back to pure semantic search
