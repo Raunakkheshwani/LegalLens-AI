@@ -34,4 +34,4 @@ else:
 
 
 
-USE_HYBRID_SEARCH = False  # flip to False to fall back to pure semantic search
+USE_HYBRID_SEARCH = True  # flip to False to fall back to pure semantic search
