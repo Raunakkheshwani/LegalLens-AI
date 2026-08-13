@@ -14,7 +14,11 @@ from langgraph.graph import StateGraph, START, END
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+
+##from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+import sqlite3
+
 from langchain_chroma import Chroma
 
 
@@ -221,13 +225,13 @@ def build_graph(interactive: bool = True):
     graph.add_edge("human_review", "finalize")
     graph.add_edge("finalize", END )
 
-    memory= MemorySaver()
+    conn = sqlite3.connect("data/checkpoints.sqlite", check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
+
     if interactive:
-        # Real usage: pause before human_review so a person can approve/edit.
-        return graph.compile(checkpointer=memory, interrupt_before=["human_review"])
+        return graph.compile(checkpointer=checkpointer, interrupt_before=["human_review"])
     else:
-        # Batch evaluation: run straight through, no pause, no human needed.
-        return graph.compile(checkpointer=memory)
+        return graph.compile(checkpointer=checkpointer)
 
 # ---- 5. Run it with real human interaction ----
 
