@@ -1,29 +1,20 @@
 """
 Streamlit frontend for LegalLens — Classy & Modern Legal AI Review Assistant.
-Self-contained: calls the LangGraph pipeline directly, no separate backend
-needed. Built this way so it can be deployed on Streamlit Community Cloud
-alone, without a companion FastAPI service running somewhere else.
+Calls the FastAPI backend over HTTP.
 
-Run: streamlit run streamlit_app.py
+Run backend first: uvicorn main:app --reload
+Then run Streamlit: streamlit run streamlit_app.py
 """
-import os
 import streamlit as st
-from langchain_core.messages import HumanMessage
+import requests
 
-from document_store import get_or_build_document_store
-from graph import build_graph
+API_BASE = "http://127.0.0.1:8000"
 
 st.set_page_config(
     page_title="LegalLens AI — Legal Document Review",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-UPLOAD_DIR = "data/uploaded_docs"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Compiled once per Streamlit server process, reused across reruns/users.
-graph_app = build_graph()
 
 # ---- Custom CSS: Modern, Classy Dark Luxe Theme ----
 st.markdown("""
@@ -39,6 +30,7 @@ st.markdown("""
         color: #E2E8F0;
     }
 
+    /* Top Navigation Header */
     .brand-header {
         display: flex;
         align-items: center;
@@ -109,6 +101,7 @@ st.markdown("""
         border: 1px solid rgba(248, 113, 113, 0.3);
     }
 
+    /* Cards & Containers */
     .classy-card {
         background: rgba(18, 24, 21, 0.65);
         backdrop-filter: blur(14px);
@@ -135,6 +128,7 @@ st.markdown("""
         margin-bottom: 16px;
     }
 
+    /* Pipeline Step Cards */
     .pipeline-card {
         background: rgba(22, 30, 26, 0.5);
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -214,6 +208,7 @@ st.markdown("""
         100% { opacity: 0.6; }
     }
 
+    /* Widget Styling */
     div[data-testid="stTextInput"] input, div[data-testid="stTextArea"] textarea {
         background-color: rgba(15, 23, 20, 0.85) !important;
         color: #F8FAFC !important;
@@ -247,6 +242,7 @@ st.markdown("""
         background: linear-gradient(135deg, #34D399 0%, #10B981 100%) !important;
     }
 
+    /* Document Status Chip */
     .doc-info-bar {
         background: rgba(16, 185, 129, 0.08);
         border: 1px solid rgba(52, 211, 153, 0.25);
@@ -286,6 +282,15 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+def check_backend_api() -> bool:
+    try:
+        r = requests.get(f"{API_BASE}/health", timeout=1.5)
+        return r.status_code == 200
+    except Exception:
+        return False
+
 
 # ---- Session State Setup ----
 for key, default in {
@@ -327,9 +332,12 @@ def set_query(text: str):
 
 
 # ---- Top Navigation Header ----
-# No separate backend to ping anymore — pipeline runs in this same process,
-# so it's "online" whenever the Streamlit app itself is running.
-status_html = '<div class="status-pill status-online">● Pipeline Ready</div>'
+api_online = check_backend_api()
+status_html = (
+    '<div class="status-pill status-online">● Backend API Connected</div>'
+    if api_online
+    else '<div class="status-pill status-offline">● Backend Offline (uvicorn main:app)</div>'
+)
 
 st.markdown(f"""
 <div class="brand-header">
@@ -342,6 +350,14 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+if not api_online:
+    st.warning(
+        "**FastAPI Backend is unreachable.** Please launch the server in your terminal:\n\n"
+        "```bash\n"
+        "uvicorn main:app --reload\n"
+        "```"
+    )
 
 # ---- Main Layout ----
 left_col, right_col = st.columns([1.35, 1])
@@ -365,20 +381,21 @@ with left_col:
             if st.button("Index & Process Document"):
                 with st.spinner("Indexing document chunks with hybrid vector store..."):
                     try:
-                        save_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
-                        with open(save_path, "wb") as f:
-                            f.write(uploaded_file.getvalue())
-
-                        _, document_id = get_or_build_document_store(save_path)
-
-                        st.session_state.document_id = document_id
-                        st.session_state.document_path = save_path
-                        st.session_state.document_name = uploaded_file.name
-                        st.success(f"Successfully indexed '{uploaded_file.name}'")
-                        st.rerun()
+                        files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                        response = requests.post(f"{API_BASE}/upload", files=files, timeout=60)
+                        if response.status_code == 200:
+                            data = response.json()
+                            st.session_state.document_id = data["document_id"]
+                            st.session_state.document_path = data["document_path"]
+                            st.session_state.document_name = uploaded_file.name
+                            st.success(f"Successfully indexed '{uploaded_file.name}'")
+                            st.rerun()
+                        else:
+                            st.error(f"Upload failed: {response.text}")
                     except Exception as e:
-                        st.error(f"Indexing failed: {e}")
+                        st.error(f"Could not connect to API server: {e}")
     else:
+        # Show active document badge bar
         st.markdown(f"""
         <div class="doc-info-bar">
             <div>
@@ -413,6 +430,7 @@ with left_col:
             label_visibility="collapsed",
         )
 
+        # Quick Suggestion Chips
         st.caption("Suggested Legal Inquiries:")
         chip_cols = st.columns(3)
         suggestions = [
@@ -436,45 +454,36 @@ with left_col:
                 st.session_state.pending_thread_id = None
 
                 with st.spinner("Executing RAG Pipeline & Self-Critique..."):
+                    payload = {
+                        "document_id": st.session_state.document_id,
+                        "document_path": st.session_state.document_path,
+                        "query": active_query,
+                    }
                     try:
-                        thread_id = f"st-{abs(hash(active_query + st.session_state.document_id))}"
-                        thread_config = {"configurable": {"thread_id": thread_id}}
-                        initial_state = {
-                            "document_path": st.session_state.document_path,
-                            "document_id": "",
-                            "query": active_query,
-                            "messages": [HumanMessage(content=active_query)],
-                            "retrieved_chunks": [],
-                            "draft_answer": "",
-                            "critique": "",
-                            "needs_revision": False,
-                            "ever_needed_revision": False,
-                            "loop_count": 0,
-                            "final_answer": "",
-                        }
-
-                        graph_app.invoke(initial_state, config=thread_config)
-                        state_snapshot = graph_app.get_state(thread_config)
-
+                        res = requests.post(f"{API_BASE}/review", json=payload, timeout=90)
                         st.session_state.step_status["retrieve"] = "done"
                         st.session_state.step_status["draft"] = "done"
                         st.session_state.step_status["critique"] = "done"
 
-                        if state_snapshot.next:
-                            st.session_state.step_status["human_review"] = "running"
-                            st.session_state.pending_thread_id = thread_id
-                            st.session_state.pending_draft = state_snapshot.values["draft_answer"]
-                            st.session_state.pending_critique = state_snapshot.values["critique"]
+                        if res.status_code == 200:
+                            data = res.json()
+                            if data.get("status") == "completed":
+                                st.session_state.step_status["finalize"] = "done"
+                                st.session_state.final_answer = data["final_answer"]
+                                st.session_state.history.append({
+                                    "query": active_query,
+                                    "answer": data["final_answer"],
+                                    "status": "Auto-Finalized",
+                                })
+                            elif data.get("status") == "pending_review":
+                                st.session_state.step_status["human_review"] = "running"
+                                st.session_state.pending_thread_id = data["thread_id"]
+                                st.session_state.pending_draft = data["draft_answer"]
+                                st.session_state.pending_critique = data["critique"]
                         else:
-                            st.session_state.step_status["finalize"] = "done"
-                            st.session_state.final_answer = state_snapshot.values["final_answer"]
-                            st.session_state.history.append({
-                                "query": active_query,
-                                "answer": state_snapshot.values["final_answer"],
-                                "status": "Auto-Finalized",
-                            })
+                            st.error(f"Pipeline Execution Failed: {res.text}")
                     except Exception as err:
-                        st.error(f"Pipeline execution failed: {err}")
+                        st.error(f"Connection Error: {err}")
 
     # ---- 3. Reviewer Sign-Off Desk (Human-in-the-Loop) ----
     if st.session_state.pending_thread_id:
@@ -505,23 +514,26 @@ with left_col:
 
         if st.button("Sign Off & Finalize Audit"):
             with st.spinner("Finalizing audit decision..."):
+                payload = {
+                    "thread_id": st.session_state.pending_thread_id,
+                    "correction": correction.strip() if correction.strip() else None,
+                }
                 try:
-                    thread_config = {"configurable": {"thread_id": st.session_state.pending_thread_id}}
-                    if correction.strip():
-                        graph_app.update_state(thread_config, {"draft_answer": correction.strip()})
-
-                    result = graph_app.invoke(None, config=thread_config)
-
-                    st.session_state.step_status["human_review"] = "done"
-                    st.session_state.step_status["finalize"] = "done"
-                    st.session_state.final_answer = result["final_answer"]
-                    st.session_state.history.append({
-                        "query": st.session_state.query_input,
-                        "answer": result["final_answer"],
-                        "status": "Human Approved" if not correction.strip() else "Human Modified",
-                    })
-                    st.session_state.pending_thread_id = None
-                    st.rerun()
+                    res = requests.post(f"{API_BASE}/review/resume", json=payload, timeout=60)
+                    if res.status_code == 200:
+                        data = res.json()
+                        st.session_state.step_status["human_review"] = "done"
+                        st.session_state.step_status["finalize"] = "done"
+                        st.session_state.final_answer = data["final_answer"]
+                        st.session_state.history.append({
+                            "query": st.session_state.query_input,
+                            "answer": data["final_answer"],
+                            "status": "Human Approved" if not correction.strip() else "Human Modified",
+                        })
+                        st.session_state.pending_thread_id = None
+                        st.rerun()
+                    else:
+                        st.error(f"Resume action failed: {res.text}")
                 except Exception as ex:
                     st.error(f"Error resuming pipeline: {ex}")
 
@@ -560,3 +572,4 @@ with right_col:
             with st.expander(f"{item['query'][:40]}... ({item['status']})"):
                 st.markdown(f"**Query:** {item['query']}")
                 st.markdown(f"**Final Answer:**\n{item['answer']}")
+arkdown(f"**Final Answer:**\n{item['answer']}")
